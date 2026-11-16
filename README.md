@@ -1,6 +1,6 @@
 # Itihasa AI
 
-Itihasa AI is a frontend-only conversational research interface for exploring Indian historical knowledge across multiple languages and document styles. The application is designed as a polished demo workspace for asking historical questions, viewing mock source evidence, and exploring multilingual answers without requiring a backend.
+Itihasa AI pairs a Next.js conversational research interface with a FastAPI backend for ingesting historical documents and answering questions with page-level citations. The frontend remains independently buildable; backend data and indexes are stored in `backend/dataset/`.
 
 ## Overview
 
@@ -53,7 +53,7 @@ lib/
 
 ## Getting Started
 
-1. Install dependencies:
+### Frontend
 
 ```bash
 npm install
@@ -71,6 +71,21 @@ npm run dev
 http://localhost:3000/workspace
 ```
 
+### Backend
+
+From `backend/`, install the pinned dependencies and start the API:
+
+```bash
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+The API documentation is available at `http://localhost:8000/docs`. Set `GEMINI_API_KEY`
+in the backend process environment to enable answer generation. `ITIHASA_DATASET_DIR`
+can override the default `backend/dataset/` storage location; OCR languages can be
+configured with `TESSERACT_LANGS` (default `eng+hin+mar`). Scanned PDFs and image uploads
+also require the Tesseract system executable and the selected language data packs.
+
 ## Available Scripts
 
 ```bash
@@ -80,9 +95,9 @@ npm run build
 
 ## Notes
 
-- This is a frontend demo and does not connect to a real historical archive or AI backend.
 - Chat data is stored in the browser via localStorage.
-- The evidence shown in the app is illustrative and intentionally labeled as demo content rather than verified archival fact.
+- The backend exposes document upload and polling under `/api/documents`, question answering
+  under `/api/query`, and index health at `/health`.
 
 ## License
 
