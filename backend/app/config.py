@@ -1,8 +1,12 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_DIR / ".env")
+
 DATASET_DIR = Path(
     os.getenv("ITIHASA_DATASET_DIR", str(BACKEND_DIR / "dataset"))
 ).expanduser().resolve()

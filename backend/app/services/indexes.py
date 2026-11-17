@@ -18,6 +18,7 @@ _dense_index: faiss.Index | None = None
 _dense_chunk_ids: list[int] = []
 _bm25: BM25Okapi | None = None
 _sparse_chunk_ids: list[int] = []
+_sparse_corpus: list[list[str]] = []
 
 
 def _tokens(text: str) -> list[str]:
@@ -44,22 +45,19 @@ def _persist_dense() -> None:
 
 
 def _persist_sparse() -> None:
-    tokenized = []
-    if _bm25 is not None:
-        tokenized = _bm25.corpus
     _write_pickle(
         config.BM25_INDEX_PATH,
-        {"chunk_ids": _sparse_chunk_ids, "tokenized_corpus": tokenized},
+        {"chunk_ids": _sparse_chunk_ids, "tokenized_corpus": _sparse_corpus},
     )
 
 
 def rebuild_sparse(session: Session) -> None:
-    global _bm25, _sparse_chunk_ids
+    global _bm25, _sparse_chunk_ids, _sparse_corpus
     with _lock:
         chunks = _all_chunks(session)
         _sparse_chunk_ids = [int(chunk.id) for chunk in chunks if chunk.id is not None]
-        corpus = [_tokens(chunk.text) for chunk in chunks]
-        _bm25 = BM25Okapi(corpus) if corpus else None
+        _sparse_corpus = [_tokens(chunk.text) for chunk in chunks]
+        _bm25 = BM25Okapi(_sparse_corpus) if _sparse_corpus else None
         config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
         _persist_sparse()
 

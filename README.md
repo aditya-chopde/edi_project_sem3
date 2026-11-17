@@ -81,7 +81,7 @@ uvicorn app.main:app --reload
 ```
 
 The API documentation is available at `http://localhost:8000/docs`. Set `GEMINI_API_KEY`
-in the backend process environment to enable answer generation. `ITIHASA_DATASET_DIR`
+in `backend/.env` to enable answer generation. `ITIHASA_DATASET_DIR`
 can override the default `backend/dataset/` storage location; OCR languages can be
 configured with `TESSERACT_LANGS` (default `eng+hin+mar`). Scanned PDFs and image uploads
 also require the Tesseract system executable and the selected language data packs.
