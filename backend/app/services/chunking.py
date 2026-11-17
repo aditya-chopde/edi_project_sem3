@@ -1,7 +1,10 @@
 from dataclasses import dataclass
+import logging
 
 from app import config
 from app.services.extraction import PageText
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -41,14 +44,33 @@ def _split_page(text: str) -> list[str]:
 
 def chunk_pages(pages: list[PageText]) -> list[TextChunk]:
     chunks: list[TextChunk] = []
+    logger.info(
+        "Splitting extracted text by page (chunk_size=%d, overlap=%d)",
+        config.CHUNK_SIZE,
+        config.CHUNK_OVERLAP,
+    )
     for page in pages:
-        for text in _split_page(page.text):
+        page_chunks = _split_page(page.text)
+        logger.debug(
+            "Split page into chunks (page=%d, characters=%d, chunks=%d)",
+            page.page,
+            len(page.text),
+            len(page_chunks),
+        )
+        for text in page_chunks:
+            chunk_index = len(chunks)
             chunks.append(
                 TextChunk(
-                    chunk_index=len(chunks),
+                    chunk_index=chunk_index,
                     text=text,
                     page_start=page.page,
                     page_end=page.page,
                 )
+            )
+            logger.debug(
+                "Created chunk (chunk_index=%d, page=%d, characters=%d)",
+                chunk_index,
+                page.page,
+                len(text),
             )
     return chunks

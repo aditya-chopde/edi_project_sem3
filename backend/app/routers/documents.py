@@ -1,3 +1,4 @@
+import logging
 import re
 import shutil
 import uuid
@@ -15,6 +16,7 @@ from app.services.indexes import rebuild_all
 from app.services.ingest import ingest_document
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 
 def _safe_filename(filename: str) -> str:
@@ -35,6 +37,7 @@ def upload_document(
     filename = _safe_filename(file.filename or "upload")
     suffix = Path(filename).suffix.lower()
     if suffix not in config.SUPPORTED_EXTENSIONS:
+        logger.warning("Rejected upload with unsupported type %s", suffix or "(none)")
         raise HTTPException(
             status_code=415,
             detail=f"Unsupported file type: {suffix or 'no extension'}",
@@ -63,15 +66,25 @@ def upload_document(
         document.error = (str(error).strip() or "Unable to save uploaded file")[:500]
         session.add(document)
         session.commit()
+        logger.exception("Could not save uploaded document %s", document_id)
         return document
 
     background_tasks.add_task(ingest_document, document_id, raw_path)
+    logger.info(
+        "Accepted document upload (document_id=%s, file_type=%s)",
+        document_id,
+        suffix,
+    )
     return document
 
 
 @router.get("", response_model=list[DocumentOut])
 def list_documents(session: Session = Depends(get_session)) -> list[Document]:
-    return list(session.exec(select(Document).order_by(Document.created_at.desc())).all())
+    documents = list(
+        session.exec(select(Document).order_by(Document.created_at.desc())).all()
+    )
+    logger.info("Listed documents (count=%d)", len(documents))
+    return documents
 
 
 @router.get("/{document_id}", response_model=DocumentOut)
@@ -80,7 +93,16 @@ def get_document(
 ) -> Document:
     document = session.get(Document, document_id)
     if document is None:
+        logger.warning(
+            "Document status requested but not found (document_id=%s)",
+            document_id,
+        )
         raise HTTPException(status_code=404, detail="Document not found")
+    logger.info(
+        "Returned document status (document_id=%s, status=%s)",
+        document_id,
+        document.status,
+    )
     return document
 
 
@@ -90,6 +112,10 @@ def delete_document(
 ) -> None:
     document = session.get(Document, document_id)
     if document is None:
+        logger.warning(
+            "Delete requested for missing document (document_id=%s)",
+            document_id,
+        )
         raise HTTPException(status_code=404, detail="Document not found")
 
     chunks = list(
@@ -105,3 +131,8 @@ def delete_document(
     (config.PROCESSED_DIR / f"doc_{document_id}_chunks.jsonl").unlink(missing_ok=True)
     with Session(engine) as index_session:
         rebuild_all(index_session)
+    logger.info(
+        "Deleted document and rebuilt indexes (document_id=%s, chunks=%d)",
+        document_id,
+        len(chunks),
+    )

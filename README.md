@@ -85,6 +85,8 @@ in the backend process environment to enable answer generation. `ITIHASA_DATASET
 can override the default `backend/dataset/` storage location; OCR languages can be
 configured with `TESSERACT_LANGS` (default `eng+hin+mar`). Scanned PDFs and image uploads
 also require the Tesseract system executable and the selected language data packs.
+Set `ITIHASA_LOG_LEVEL=DEBUG` before starting Uvicorn to see per-page extraction
+and per-chunk creation details; the default `INFO` level reports stage summaries.
 
 ## Available Scripts
 

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from html.parser import HTMLParser
+import logging
 from pathlib import Path
 
 import cv2
@@ -11,6 +12,8 @@ from ebooklib import ITEM_DOCUMENT, epub
 from PIL import Image
 
 from app import config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,12 +51,15 @@ def _ocr(image: Image.Image) -> str:
 
 def extract_document(path: Path, file_type: str) -> list[PageText]:
     suffix = file_type.lower()
+    logger.info("Extracting text from file type %s", suffix)
     if suffix == ".pdf":
         pages: list[PageText] = []
         with fitz.open(path) as pdf:
             for page_number, page in enumerate(pdf, start=1):
                 text = page.get_text("text").strip()
+                extraction_method = "text"
                 if len(text) < 50:
+                    extraction_method = "OCR"
                     pixmap = page.get_pixmap(
                         dpi=config.OCR_DPI, colorspace=fitz.csRGB, alpha=False
                     )
@@ -61,21 +67,36 @@ def extract_document(path: Path, file_type: str) -> list[PageText]:
                         "RGB", (pixmap.width, pixmap.height), pixmap.samples
                     )
                     text = _ocr(image)
+                logger.debug(
+                    "Extracted PDF page (page=%d, method=%s, characters=%d)",
+                    page_number,
+                    extraction_method,
+                    len(text),
+                )
                 pages.append(PageText(page=page_number, text=text))
         return pages
 
     if suffix in {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp"}:
         with Image.open(path) as image:
-            return [PageText(page=1, text=_ocr(image.copy()))]
+            text = _ocr(image.copy())
+            logger.debug(
+                "OCR extracted image (page=1, characters=%d)", len(text)
+            )
+            return [PageText(page=1, text=text)]
 
     if suffix in {".txt", ".md"}:
-        return [PageText(page=1, text=path.read_text(encoding="utf-8-sig"))]
+        text = path.read_text(encoding="utf-8-sig")
+        logger.debug(
+            "Read text document (page=1, characters=%d)", len(text)
+        )
+        return [PageText(page=1, text=text)]
 
     if suffix == ".docx":
         word_document = WordDocument(path)
         text = "\n".join(
             paragraph.text for paragraph in word_document.paragraphs if paragraph.text
         )
+        logger.debug("Extracted DOCX text (page=1, characters=%d)", len(text))
         return [PageText(page=1, text=text)]
 
     if suffix == ".epub":
@@ -86,7 +107,13 @@ def extract_document(path: Path, file_type: str) -> list[PageText]:
         ):
             parser = _TextExtractor()
             parser.feed(item.get_content().decode("utf-8", errors="replace"))
-            pages.append(PageText(page=page_number, text="\n".join(parser.parts)))
+            text = "\n".join(parser.parts)
+            logger.debug(
+                "Extracted EPUB section (page=%d, characters=%d)",
+                page_number,
+                len(text),
+            )
+            pages.append(PageText(page=page_number, text=text))
         return pages
 
     raise ValueError(f"Unsupported file type: {suffix}")

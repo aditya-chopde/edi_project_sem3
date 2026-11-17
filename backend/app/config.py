@@ -28,6 +28,7 @@ SUPPORTED_EXTENSIONS = {
     ".md",
     ".docx",
     ".epub",
+    ".csv",
 }
 CHUNK_SIZE = int(os.getenv("ITIHASA_CHUNK_SIZE", "512"))
 CHUNK_OVERLAP = int(os.getenv("ITIHASA_CHUNK_OVERLAP", "64"))
@@ -43,3 +44,8 @@ FUSED_TOP_K = 8
 RRF_K = 60
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CORS_ORIGINS = ["http://localhost:3000"]
+LOG_LEVEL = os.getenv("ITIHASA_LOG_LEVEL", "INFO").upper()
+if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    raise ValueError(
+        "ITIHASA_LOG_LEVEL must be DEBUG, INFO, WARNING, ERROR, or CRITICAL"
+    )

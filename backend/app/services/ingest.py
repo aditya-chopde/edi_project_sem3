@@ -26,23 +26,55 @@ def _set_status(document_id: str, status: str, **updates: object) -> None:
             setattr(document, field, value)
         session.add(document)
         session.commit()
+    logger.info(
+        "Document ingestion status (document_id=%s, status=%s)",
+        document_id,
+        status,
+    )
 
 
 def ingest_document(document_id: str, raw_path: Path) -> None:
     try:
+        logger.info("Started document ingestion (document_id=%s)", document_id)
         with Session(engine) as session:
             document = session.get(Document, document_id)
             if document is None:
                 raise ValueError(f"Document {document_id} no longer exists")
             file_type = document.file_type
             language = document.language
+        logger.info(
+            "Preparing ingestion (document_id=%s, file_type=%s)",
+            document_id,
+            file_type,
+        )
 
         _set_status(document_id, "extracting", error=None)
         pages = extract_document(raw_path, file_type)
+        logger.info(
+            "Text extraction complete (document_id=%s, pages=%d)",
+            document_id,
+            len(pages),
+        )
         _set_status(document_id, "chunking", num_pages=len(pages))
         text_chunks = chunk_pages(pages)
+        logger.info(
+            "Chunking complete (document_id=%s, chunks=%d)",
+            document_id,
+            len(text_chunks),
+        )
         _set_status(document_id, "embedding", num_chunks=len(text_chunks))
+        logger.info(
+            "Generating passage embeddings (document_id=%s, model=%s, chunks=%d)",
+            document_id,
+            config.EMBEDDING_MODEL,
+            len(text_chunks),
+        )
         vectors = embed_passages([chunk.text for chunk in text_chunks])
+        logger.info(
+            "Embedding complete (document_id=%s, vectors=%d)",
+            document_id,
+            len(vectors),
+        )
 
         with Session(engine) as session:
             document = session.get(Document, document_id)
@@ -70,6 +102,11 @@ def ingest_document(document_id: str, raw_path: Path) -> None:
             session.commit()
             for chunk in persisted_chunks:
                 session.refresh(chunk)
+            logger.info(
+                "Saved chunks to database (document_id=%s, chunks=%d)",
+                document_id,
+                len(persisted_chunks),
+            )
 
             config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
             export_path = config.PROCESSED_DIR / f"doc_{document_id}_chunks.jsonl"
@@ -92,6 +129,11 @@ def ingest_document(document_id: str, raw_path: Path) -> None:
                         + "\n"
                     )
             temporary_path.replace(export_path)
+            logger.info(
+                "Exported chunks (document_id=%s, path=%s)",
+                document_id,
+                export_path,
+            )
 
         export_path = config.PROCESSED_DIR / f"doc_{document_id}_chunks.jsonl"
         with Session(engine) as session:
@@ -99,10 +141,21 @@ def ingest_document(document_id: str, raw_path: Path) -> None:
                 session, document_id, persisted_chunks, vectors
             ):
                 export_path.unlink(missing_ok=True)
+                logger.info(
+                    "Stopped ingestion because document was deleted (document_id=%s)",
+                    document_id,
+                )
                 return
+        logger.info(
+            "Added vectors to dense index (document_id=%s, vectors=%d)",
+            document_id,
+            len(vectors),
+        )
         with Session(engine) as session:
             rebuild_sparse(session)
+        logger.info("Rebuilt sparse index (document_id=%s)", document_id)
         _set_status(document_id, "indexed", error=None)
+        logger.info("Document ingestion complete (document_id=%s)", document_id)
     except Exception as error:
         message = str(error).strip() or error.__class__.__name__
         logger.exception("Ingestion failed for document %s", document_id)

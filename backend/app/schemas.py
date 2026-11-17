@@ -62,3 +62,7 @@ class HealthResponse(BaseModel):
     status: str
     dense_vectors: int
     sparse_docs: int
+
+class HomeResponse(BaseModel):
+    status: str
+    message: str
