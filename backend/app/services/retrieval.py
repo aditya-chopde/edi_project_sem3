@@ -10,6 +10,7 @@ from app.services.indexes import (
     search_sparse,
 )
 from app.services.llm import generate_answer
+from app.services.reranking import rerank
 
 DetectorFactory.seed = 0
 
@@ -53,7 +54,14 @@ def _detect_language(question: str) -> str:
 
 
 def answer_query(
-    session: Session, question: str, requested_language: str | None
+    session: Session,
+    question: str,
+    requested_language: str | None,
+    *,
+    book_number: str | None = None,
+    parvan: int | None = None,
+    line_id: str | None = None,
+    section_header: str | None = None,
 ) -> QueryResponse:
     language_code = (
         _language_code(requested_language)
@@ -61,37 +69,64 @@ def answer_query(
         else _detect_language(question)
     )
     language = _language_name(language_code)
-    dense_ids = search_dense(question, config.DENSE_TOP_K)
-    sparse_ids = search_sparse(question, config.SPARSE_TOP_K)
+    has_filters = any(
+        value is not None
+        for value in (book_number, parvan, line_id, section_header)
+    )
+    allowed_ids: set[int] | None = None
+    if has_filters:
+        statement = select(Chunk)
+        if book_number is not None:
+            statement = statement.where(Chunk.book_number == book_number)
+        if parvan is not None:
+            statement = statement.where(Chunk.parvan == parvan)
+        if line_id is not None:
+            statement = statement.where(Chunk.line_id == line_id)
+        if section_header is not None:
+            statement = statement.where(Chunk.section_header == section_header)
+        allowed_ids = {
+            int(chunk.id)
+            for chunk in session.exec(statement).all()
+            if chunk.id is not None
+        }
+    dense_ids = search_dense(question, config.DENSE_TOP_K, allowed_ids)
+    sparse_ids = search_sparse(question, config.SPARSE_TOP_K, allowed_ids)
     fused = reciprocal_rank_fusion(
         [dense_ids, sparse_ids], top_k=config.FUSED_TOP_K
     )
-    chunk_ids = [chunk_id for chunk_id, _ in fused]
+    fused_ids = [chunk_id for chunk_id, _ in fused]
     chunks = (
-        list(session.exec(select(Chunk).where(Chunk.id.in_(chunk_ids))).all())
-        if chunk_ids
+        list(session.exec(select(Chunk).where(Chunk.id.in_(fused_ids))).all())
+        if fused_ids
         else []
     )
     chunks_by_id = {
         int(chunk.id): chunk for chunk in chunks if chunk.id is not None
     }
-    ordered_chunks = [
+    fused_chunks = [
         chunks_by_id[chunk_id]
-        for chunk_id in chunk_ids
+        for chunk_id in fused_ids
         if chunk_id in chunks_by_id
     ]
+    reranked = rerank(
+        question,
+        fused_chunks,
+        top_k=config.RERANKED_TOP_K,
+    )
+    context_ids = [chunk_id for chunk_id, _ in reranked]
+    context_chunks = [chunks_by_id[chunk_id] for chunk_id in context_ids]
     documents = (
         {
             document.id: document
             for document in session.exec(
                 select(Document).where(
                     Document.id.in_(
-                        {chunk.document_id for chunk in ordered_chunks}
+                        {chunk.document_id for chunk in context_chunks}
                     )
                 )
             ).all()
         }
-        if ordered_chunks
+        if context_chunks
         else {}
     )
 
@@ -101,9 +136,13 @@ def answer_query(
         fused=[
             FusedHit(chunk_id=chunk_id, score=score) for chunk_id, score in fused
         ],
-        chunk_ids=[int(chunk.id) for chunk in ordered_chunks if chunk.id is not None],
+        reranked=[
+            FusedHit(chunk_id=chunk_id, score=score)
+            for chunk_id, score in reranked
+        ],
+        chunk_ids=context_ids,
     )
-    if not ordered_chunks:
+    if not context_chunks:
         return QueryResponse(
             answer=_NO_EVIDENCE.get(language_code, _NO_EVIDENCE["en"]),
             citations=[],
@@ -112,7 +151,7 @@ def answer_query(
         )
 
     passages = []
-    for chunk in ordered_chunks:
+    for chunk in context_chunks:
         document = documents.get(chunk.document_id)
         title = document.title if document else chunk.document_id
         passages.append(
@@ -120,7 +159,7 @@ def answer_query(
             f"{chunk.text}"
         )
     generated = generate_answer(question, language, "\n\n".join(passages))
-    allowed_ids = set(chunks_by_id)
+    allowed_ids = set(context_ids)
     used_ids = list(
         dict.fromkeys(
             chunk_id

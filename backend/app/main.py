@@ -11,6 +11,11 @@ from app.database import create_db_and_tables, engine
 from app.routers import api_test, documents, query
 from app.schemas import HealthResponse, HomeResponse
 from app.services.indexes import diagnostics_counts, load_indexes
+from app.services.ingestion_queue import (
+    recover_interrupted_ingestions,
+    stop_ingestion_worker,
+)
+from app.services.indexing import stop_indexing_worker
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
@@ -30,14 +35,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     create_db_and_tables()
     with Session(engine) as session:
         load_indexes(session)
+    recover_interrupted_ingestions()
     dense_vectors, sparse_docs = diagnostics_counts()
     logger.info(
         "Backend ready (dense_vectors=%d, sparse_docs=%d)",
         dense_vectors,
         sparse_docs,
     )
-    yield
-    logger.info("Shutting down Itihasa AI backend")
+    try:
+        yield
+    finally:
+        stop_ingestion_worker()
+        stop_indexing_worker()
+        logger.info("Shutting down Itihasa AI backend")
 
 
 app = FastAPI(title="Itihasa AI API", version="1.0.0", lifespan=lifespan)

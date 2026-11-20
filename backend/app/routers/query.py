@@ -18,7 +18,13 @@ def query(
     logger.info("Query requested")
     try:
         response = answer_query(
-            session, request.question, request.answer_language
+            session,
+            request.question,
+            request.answer_language,
+            book_number=request.book_number,
+            parvan=request.parvan,
+            line_id=request.line_id,
+            section_header=request.section_header,
         )
         logger.info(
             "Query completed (retrieved_chunks=%d, citations=%d)",

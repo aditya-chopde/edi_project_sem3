@@ -33,14 +33,30 @@ def api_test_page() -> str:
     pre { max-height: 320px; overflow: auto; padding: 12px; background: #f5f2ec; border-radius: 7px; white-space: pre-wrap; overflow-wrap: anywhere; }
     .result { margin-top: 14px; }
     .error { color: #a32323; }
-    .doc { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid #eee9e1; }
-    .doc button { flex: 0 0 auto; margin: 0; }
+    .doc { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid #eee9e1; }
+    .doc-main { flex: 1 1 100%; min-width: 0; }
+    .doc-title { font-weight: 650; }
+    .doc-meta, .doc-detail { display: block; margin-top: 4px; color: #777168; font-size: .88rem; overflow-wrap: anywhere; }
+    .doc-progress-row { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
+    .doc-progress { height: 9px; flex: 1; accent-color: #76533a; }
+    .doc-progress-row strong { min-width: 42px; text-align: right; font-size: .9rem; }
+    .doc-stages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    .doc-stage { padding: 4px 8px; border-radius: 999px; background: #f0eee9; color: #777168; font-size: .76rem; }
+    .doc-stage.done { background: #e5eee7; color: #43694c; }
+    .doc-stage.current { background: #f5eadc; color: #76533a; font-weight: 650; }
+    .doc-stage.failed { background: #fae7e4; color: #a32323; }
+    .doc-actions { display: flex; gap: 8px; margin-left: auto; }
+    .doc button { width: auto; flex: 0 0 auto; margin: 0; }
+    .documents-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; padding-top: 12px; }
+    .documents-pagination[hidden] { display: none; }
+    .documents-pagination button { min-width: 42px; margin: 0; }
+    .documents-pagination span { color: #777168; font-size: .88rem; }
     @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <h1>Itihasa AI API tester</h1>
-  <p class="intro">Try the backend upload, query, status, and delete endpoints. Responses and errors appear below each form.</p>
+  <p class="intro">Try the backend upload, query, status, and delete endpoints. Document progress refreshes automatically while processing.</p>
 
   <section>
     <h2>POST /api/documents/upload</h2>
@@ -79,6 +95,11 @@ def api_test_page() -> str:
     <h2>GET /api/documents and status</h2>
     <button id="refresh-documents" class="secondary" type="button">Refresh documents</button>
     <div id="documents-result" class="result" aria-live="polite"></div>
+    <nav id="documents-pagination" class="documents-pagination" aria-label="Document pages" hidden>
+      <button id="previous-documents" class="secondary" type="button" aria-label="Previous documents">&larr;</button>
+      <span id="documents-page"></span>
+      <button id="next-documents" class="secondary" type="button" aria-label="Next documents">&rarr;</button>
+    </nav>
   </section>
 
   <section>
@@ -127,6 +148,7 @@ def api_test_page() -> str:
         });
         document.getElementById("delete-id").value = data.id;
         showResult(output, data);
+        currentDocumentPage = 0;
         refreshDocuments();
       } catch (error) {
         showResult(output, null, error.message);
@@ -157,29 +179,103 @@ def api_test_page() -> str:
       }
     });
 
+    const documentsPerPage = 3;
+    let currentDocumentPage = 0;
+    let refreshingDocuments = false;
     async function refreshDocuments() {
       const output = document.getElementById("documents-result");
+      if (refreshingDocuments) return;
+      refreshingDocuments = true;
       output.replaceChildren();
       try {
         const { data } = await request("/api/documents");
+        output.dataset.hasActiveDocuments = "false";
         if (!data.length) {
           output.textContent = "No documents uploaded yet.";
+          document.getElementById("documents-pagination").hidden = true;
           return;
         }
-        for (const doc of data) {
+        const totalPages = Math.ceil(data.length / documentsPerPage);
+        currentDocumentPage = Math.min(currentDocumentPage, totalPages - 1);
+        const start = currentDocumentPage * documentsPerPage;
+        const pageDocuments = data.slice(start, start + documentsPerPage);
+        const pagination = document.getElementById("documents-pagination");
+        pagination.hidden = data.length <= documentsPerPage;
+        document.getElementById("documents-page").textContent =
+          `${start + 1}-${Math.min(start + documentsPerPage, data.length)} of ${data.length}`;
+        document.getElementById("previous-documents").disabled = currentDocumentPage === 0;
+        document.getElementById("next-documents").disabled = currentDocumentPage >= totalPages - 1;
+        const hasActiveDocuments = data.some(
+          (doc) => !["indexed", "failed"].includes(doc.status),
+        );
+        const stages = [
+          ["extracting", "Extracting"],
+          ["chunking", "Chunking"],
+          ["embedding", "Embedding"],
+          ["indexing", "Indexing"],
+        ];
+        for (const doc of pageDocuments) {
+          const isIndexed = doc.status === "indexed";
           const row = document.createElement("div");
           row.className = "doc";
-          const details = document.createElement("span");
-          details.textContent = `${doc.title} — ${doc.status} — ${doc.id}`;
-          row.append(details);
+          const main = document.createElement("div");
+          main.className = "doc-main";
+          const title = document.createElement("div");
+          title.className = "doc-title";
+          title.textContent = `${doc.title} — ${doc.status}`;
+          const metadata = document.createElement("small");
+          metadata.className = "doc-meta";
+          metadata.textContent = `${doc.filename} · ${doc.num_pages} pages · ${doc.num_chunks} chunks · ID ${doc.id}`;
+          if (!isIndexed) {
+            const progressRow = document.createElement("div");
+            progressRow.className = "doc-progress-row";
+            const progress = document.createElement("progress");
+            progress.className = "doc-progress";
+            progress.max = 100;
+            progress.value = doc.progress_percent || 0;
+            progress.setAttribute("aria-label", `${progress.value}% complete`);
+            const percentage = document.createElement("strong");
+            percentage.textContent = `${progress.value}%`;
+            progressRow.append(progress, percentage);
+
+            const stageList = document.createElement("div");
+            stageList.className = "doc-stages";
+            const activeIndex = stages.findIndex(([status]) => status === doc.status);
+            for (const [index, [, label]] of stages.entries()) {
+              const stage = document.createElement("span");
+              stage.className = "doc-stage";
+              if (activeIndex >= 0 && index < activeIndex) {
+                stage.classList.add("done");
+              } else if (doc.status === "failed" && index === activeIndex) {
+                stage.classList.add("failed");
+              } else if (!["failed", "pending"].includes(doc.status) && index === activeIndex) {
+                stage.classList.add("current");
+              }
+              stage.textContent = label;
+              stageList.append(stage);
+            }
+            main.append(progressRow, stageList);
+          }
+          const detail = document.createElement("small");
+          detail.className = "doc-detail";
+          detail.textContent = isIndexed
+            ? doc.progress_detail || "Ingestion complete"
+            : doc.error
+              ? `Error: ${doc.error}`
+              : doc.progress_detail || "Waiting to start";
+          main.append(title, metadata, detail);
+          row.append(main);
+
+          const actions = document.createElement("div");
+          actions.className = "doc-actions";
           const statusButton = document.createElement("button");
           statusButton.type = "button";
           statusButton.className = "secondary";
-          statusButton.textContent = "Check status";
+          statusButton.textContent = "Refresh";
           statusButton.addEventListener("click", async () => {
             try {
-              const { data: status } = await request(`/api/documents/${encodeURIComponent(doc.id)}`);
-              showResult(output, status);
+              await request(`/api/documents/${encodeURIComponent(doc.id)}`);
+              refreshDocuments();
             } catch (error) {
               showResult(output, null, error.message);
             }
@@ -191,15 +287,30 @@ def api_test_page() -> str:
             document.getElementById("delete-id").value = doc.id;
             document.getElementById("delete-id").scrollIntoView({ behavior: "smooth" });
           });
-          row.append(statusButton, deleteButton);
+          actions.append(statusButton, deleteButton);
+          row.append(actions);
           output.append(row);
         }
+        output.dataset.hasActiveDocuments = String(hasActiveDocuments);
       } catch (error) {
+        output.dataset.hasActiveDocuments = "false";
         showResult(output, null, error.message);
+      } finally {
+        refreshingDocuments = false;
       }
     }
 
     document.getElementById("refresh-documents").addEventListener("click", refreshDocuments);
+    document.getElementById("previous-documents").addEventListener("click", () => {
+      if (currentDocumentPage > 0) {
+        currentDocumentPage -= 1;
+        refreshDocuments();
+      }
+    });
+    document.getElementById("next-documents").addEventListener("click", () => {
+      currentDocumentPage += 1;
+      refreshDocuments();
+    });
     document.getElementById("delete-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;

@@ -1,4 +1,5 @@
 from threading import Lock
+from typing import Callable
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -7,6 +8,7 @@ from app import config
 
 _model: SentenceTransformer | None = None
 _model_lock = Lock()
+ProgressCallback = Callable[[int, int], None]
 
 
 def _get_model() -> SentenceTransformer:
@@ -18,22 +20,32 @@ def _get_model() -> SentenceTransformer:
                 _model = SentenceTransformer(
                     config.EMBEDDING_MODEL,
                     cache_folder=str(config.MODEL_CACHE_DIR),
+                    device=config.EMBEDDING_DEVICE,
                 )
     return _model
 
 
-def embed_passages(texts: list[str]) -> np.ndarray:
+def embed_passages(
+    texts: list[str],
+    progress_callback: ProgressCallback | None = None,
+) -> np.ndarray:
     if not texts:
         return np.empty((0, 0), dtype=np.float32)
     model = _get_model()
-    vectors = model.encode(
-        [f"passage: {text}" for text in texts],
-        batch_size=config.EMBEDDING_BATCH_SIZE,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
-    return np.asarray(vectors, dtype=np.float32)
+    embeddings = []
+    for start in range(0, len(texts), config.EMBEDDING_BATCH_SIZE):
+        batch = texts[start : start + config.EMBEDDING_BATCH_SIZE]
+        vectors = model.encode(
+            [f"passage: {text}" for text in batch],
+            batch_size=config.EMBEDDING_BATCH_SIZE,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        embeddings.append(np.asarray(vectors, dtype=np.float32))
+        if progress_callback:
+            progress_callback(start + len(batch), len(texts))
+    return np.concatenate(embeddings, axis=0)
 
 
 def embed_query(text: str) -> np.ndarray:

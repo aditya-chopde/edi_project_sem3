@@ -5,7 +5,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 DocumentStatus = Literal[
-    "pending", "extracting", "chunking", "embedding", "indexed", "failed"
+    "pending",
+    "extracting",
+    "chunking",
+    "embedding",
+    "indexing",
+    "indexed",
+    "failed",
 ]
 
 
@@ -20,6 +26,8 @@ class DocumentOut(BaseModel):
     historical_period: Optional[str]
     source_url: Optional[str]
     status: DocumentStatus
+    progress_percent: int
+    progress_detail: Optional[str]
     error: Optional[str]
     num_pages: int
     num_chunks: int
@@ -29,6 +37,10 @@ class DocumentOut(BaseModel):
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=10_000)
     answer_language: Optional[str] = Field(default=None, max_length=64)
+    book_number: Optional[str] = Field(default=None, pattern=r"^\d{2}$")
+    parvan: Optional[int] = Field(default=None, ge=0, le=99)
+    line_id: Optional[str] = Field(default=None, pattern=r"^\d{8}[A-Za-z]$")
+    section_header: Optional[str] = Field(default=None, max_length=256)
 
 
 class Citation(BaseModel):
@@ -48,6 +60,7 @@ class RetrievalDiagnostics(BaseModel):
     dense_hits: list[int]
     sparse_hits: list[int]
     fused: list[FusedHit]
+    reranked: list[FusedHit]
     chunk_ids: list[int]
 
 
