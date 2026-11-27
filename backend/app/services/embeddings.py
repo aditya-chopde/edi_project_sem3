@@ -5,6 +5,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from app import config
+from app.services.device import resolve_device
 
 _model: SentenceTransformer | None = None
 _model_lock = Lock()
@@ -20,7 +21,7 @@ def _get_model() -> SentenceTransformer:
                 _model = SentenceTransformer(
                     config.EMBEDDING_MODEL,
                     cache_folder=str(config.MODEL_CACHE_DIR),
-                    device=config.EMBEDDING_DEVICE,
+                    device=resolve_device(config.EMBEDDING_DEVICE, "embeddings"),
                 )
     return _model
 

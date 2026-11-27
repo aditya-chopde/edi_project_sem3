@@ -6,6 +6,7 @@ from sentence_transformers import CrossEncoder
 
 from app import config
 from app.models import Chunk
+from app.services.device import resolve_device
 
 _model: CrossEncoder | None = None
 _model_lock = Lock()
@@ -21,7 +22,7 @@ def _get_model() -> CrossEncoder:
                 _model = CrossEncoder(
                     config.RERANKER_MODEL,
                     max_length=config.RERANKER_MAX_LENGTH,
-                    device=config.RERANKER_DEVICE,
+                    device=resolve_device(config.RERANKER_DEVICE, "reranking"),
                     cache_folder=str(config.MODEL_CACHE_DIR),
                 )
     return _model

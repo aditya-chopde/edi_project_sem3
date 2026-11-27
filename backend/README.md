@@ -61,8 +61,15 @@ passage/query prefixes and vector normalization are retained. Legacy FAISS metad
 a model field is treated as E5-base; a different configured model triggers a full one-time
 re-embedding before startup completes. Model weights are cached under
 `backend/dataset/models/`.
-The dense embedder and reranker default to CPU (`ITIHASA_EMBEDDING_DEVICE=cpu` and
-`ITIHASA_RERANKER_DEVICE=cpu`); an integrated Intel GPU is not used by these PyTorch models.
+The dense embedder and reranker automatically choose an available PyTorch accelerator:
+CUDA first (typically a dedicated NVIDIA GPU), then Intel XPU (supported Intel integrated
+or discrete GPUs), then Apple MPS, and CPU if no supported GPU runtime is available.
+Set `ITIHASA_EMBEDDING_DEVICE` or `ITIHASA_RERANKER_DEVICE` to `cpu`, `cuda`, `xpu`, or
+`mps` to override auto-selection; an explicitly requested but unavailable device fails with
+an actionable error. Intel integrated graphics require an Intel GPU-enabled PyTorch/XPU
+runtime and compatible drivers; merely detecting Intel graphics in the operating system
+does not make the installed PyTorch build able to run on it. Embedding and reranking are
+inference operations, not model training.
 The larger models increase
 first-run download time, RAM use, and CPU query latency. Override
 `ITIHASA_EMBEDDING_MODEL`, `ITIHASA_EMBEDDING_DEVICE`, `ITIHASA_RERANKER_MODEL`, or
@@ -87,7 +94,8 @@ flowchart LR
     T --> W[Cross-encoder rerank top 5]
 ```
 
-Stage, OCR, index insertion/persistence, and total-ingestion durations are logged at
+The selected device for each model is logged when it loads. Stage, OCR, index
+insertion/persistence, and total-ingestion durations are logged at
 `INFO`, along with process peak RSS where the platform exposes it.
 
 ## Tests and benchmarks
