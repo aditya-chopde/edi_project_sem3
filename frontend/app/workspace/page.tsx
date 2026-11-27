@@ -21,18 +21,26 @@ import {
   PanelLeftClose,
   Pin,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { Button } from "@/components/ui/button";
-import { createDemoAnswer, demoSources } from "@/lib/chat-mock";
+import {
+  api,
+  type ApiDocument,
+  type ApiHealth,
+  type QueryResponse,
+  supportedDocumentExtensions,
+} from "@/lib/api";
 import type {
   ChatAttachment,
   ChatMessage,
@@ -53,11 +61,7 @@ const responseLanguages: ResponseLanguage[] = [
   "Hinglish",
   "Sanskrit",
 ];
-const retrievalModes: RetrievalMode[] = [
-  "Cross-language",
-  "Hybrid",
-  "Same-language",
-];
+const retrievalModes: RetrievalMode[] = ["Hybrid"];
 const suggestions = [
   { prompt: "How do Sanskrit texts describe the purpose of learning?", script: "SANSKRIT · ENGLISH" },
   { prompt: "Find Persian records about trade in the Deccan.", script: "PERSIAN RECORDS" },
@@ -72,6 +76,28 @@ function makeId() {
 function conversationTitle(question: string) {
   const normalized = question.trim().replace(/\s+/g, " ");
   return normalized.length > 46 ? `${normalized.slice(0, 43).trimEnd()}…` : normalized;
+}
+
+function apiErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "The request could not be completed.";
+}
+
+function waitForDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("The request was cancelled.", "AbortError"));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("The request was cancelled.", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function formatTime(timestamp: number) {
@@ -261,7 +287,7 @@ function Sidebar({
         </div>
         <div className="itihasa-sidebar-foot">
           <span className="itihasa-status-dot" />
-          <span>Local demo workspace</span>
+          <span>Browser-local history</span>
           <span className="itihasa-local-badge">PRIVATE</span>
         </div>
       </aside>
@@ -289,7 +315,7 @@ function SourceCard({
         type="button"
       >
         <span className="itihasa-source-number">
-          {source.id.endsWith("sanskrit") ? "1" : source.id.endsWith("marathi") ? "2" : "3"}
+          {source.id.replace(/^chunk-/, "")}
         </span>
         <span className="itihasa-source-main">
           <strong>{source.title}</strong>
@@ -297,7 +323,7 @@ function SourceCard({
         </span>
         {source.relevanceScore !== undefined && (
           <span className="itihasa-source-score">
-            {source.relevanceScore.toFixed(2)} <small>demo score</small>
+            {source.relevanceScore.toFixed(2)} <small>reranker score</small>
           </span>
         )}
         <ChevronDown size={16} className="itihasa-source-chevron" />
@@ -305,7 +331,7 @@ function SourceCard({
       {expanded && (
         <div className="itihasa-source-detail">
           <p>{source.snippet}</p>
-          <span>Illustrative interface record · not verified archival evidence</span>
+          <span>Document {source.documentId}</span>
         </div>
       )}
     </article>
@@ -400,27 +426,39 @@ function MessageItem({
         <span className="itihasa-assistant-avatar"><Sparkles size={15} /></span>
         <strong>Itihasa AI</strong>
         <span className="itihasa-answer-language">Answer in {message.language}</span>
-        {(message.status === "pending" || message.status === "streaming") && (
+        {message.status !== "completed" &&
+          message.status !== "failed" &&
+          message.status !== "stopped" && (
           <span className="itihasa-live-status">
-            {message.status === "pending" ? "Searching records" : "Writing"}
+            {message.status === "uploading"
+              ? "Uploading document"
+              : message.status === "indexing"
+                ? "Indexing document"
+                : "Searching records"}
             <i />
           </span>
         )}
       </div>
       <div className="itihasa-assistant-content">
         {message.content ? (
-          <>
-            <ChatMarkdown content={message.content} onCitationClick={(id) => onCitation(message.id, id)} />
-            {message.status === "streaming" && <span aria-label="Generating response" className="itihasa-stream-cursor" />}
-          </>
-        ) : message.status === "pending" ? (
+          <ChatMarkdown content={message.content} onCitationClick={(id) => onCitation(message.id, id)} />
+        ) : message.status === "pending" ||
+          message.status === "uploading" ||
+          message.status === "indexing" ||
+          message.status === "querying" ? (
           <div className="itihasa-pipeline-loader" role="status" aria-live="polite">
             <LoaderCircle size={16} />
-            <span>Searching the demonstration archive…</span>
+            <span>{message.progressDetail ?? (
+              message.status === "uploading"
+                ? "Uploading your document…"
+                : message.status === "indexing"
+                  ? "Indexing the uploaded document…"
+                  : "Searching your indexed sources…"
+            )}</span>
           </div>
         ) : message.status === "failed" ? (
           <p className="itihasa-error-message">
-            {message.errorDetails ?? "The demonstration response could not be generated."}
+            {message.errorDetails ?? "The request could not be completed."}
           </p>
         ) : null}
         {message.status === "stopped" && message.content && (
@@ -433,7 +471,7 @@ function MessageItem({
             <section className="itihasa-sources" aria-label="Sources">
               <div className="itihasa-sources-heading">
                 <span><BookOpen size={15} /> Sources</span>
-                <small>Demonstration fixtures · not verified archival evidence</small>
+                <small>Retrieved passages with page citations</small>
               </div>
               {message.sources.map((source) => (
                 <SourceCard key={source.id} messageId={message.id} source={source} />
@@ -502,7 +540,7 @@ function EmptyChat({
         </div>
       </div>
       <span className="itihasa-demo-disclaimer">
-        Interactive demo · no live archive connected · example records are illustrative only
+        Answers use uploaded documents and include page-level source citations.
       </span>
     </div>
   );
@@ -517,6 +555,7 @@ function ChatComposer({
   setMode,
   attachment,
   setAttachment,
+  onFileSelect,
   onSend,
   onStop,
   isGenerating,
@@ -530,6 +569,7 @@ function ChatComposer({
   setMode: (mode: RetrievalMode) => void;
   attachment: ChatAttachment | null;
   setAttachment: (attachment: ChatAttachment | null) => void;
+  onFileSelect: (file: File | null) => void;
   onSend: () => void;
   onStop: () => void;
   isGenerating: boolean;
@@ -562,7 +602,15 @@ function ChatComposer({
           <div className="itihasa-pending-attachment">
             <FileText size={15} />
             <span>{attachment.name}</span>
-            <IconButton label="Remove attachment" onClick={() => setAttachment(null)}><X size={14} /></IconButton>
+            <IconButton
+              label="Remove attachment"
+              onClick={() => {
+                setAttachment(null);
+                onFileSelect(null);
+              }}
+            >
+              <X size={14} />
+            </IconButton>
           </div>
         )}
         <textarea
@@ -576,19 +624,23 @@ function ChatComposer({
         />
         <div className="itihasa-composer-toolbar">
           <div className="itihasa-composer-tools">
-            <label className="itihasa-attach-button" title="Attach a PDF or image">
+            <label className="itihasa-attach-button" title="Attach a document">
               <Paperclip size={16} />
               <span>Attach</span>
               <input
-                accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
-                aria-label="Attach a PDF or image"
+                accept={supportedDocumentExtensions.join(",")}
+                aria-label="Upload a document with your question"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) {
-                    if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
-                      onNotify("Choose a PDF or image file.", "error");
+                    const extension = `.${file.name.split(".").pop()?.toLowerCase() ?? ""}`;
+                    if (!supportedDocumentExtensions.includes(extension as (typeof supportedDocumentExtensions)[number])) {
+                      onNotify("This document type is not supported by the API.", "error");
+                      onFileSelect(null);
+                      setAttachment(null);
                     } else {
                       setAttachment({ name: file.name, size: file.size, type: file.type });
+                      onFileSelect(file);
                     }
                   }
                   event.target.value = "";
@@ -605,7 +657,7 @@ function ChatComposer({
                 onChange={(event) => setMode(event.target.value as RetrievalMode)}
                 value={mode}
               >
-                {retrievalModes.map((item) => <option key={item}>{item}</option>)}
+                <option value="Hybrid">Hybrid (dense + keyword)</option>
               </select>
               <ChevronDown size={13} />
             </label>
@@ -623,51 +675,167 @@ function ChatComposer({
       </div>
       <div className="itihasa-composer-hint">
         <span><kbd>Enter</kbd> to send <i>·</i> <kbd>Shift + Enter</kbd> for a new line</span>
-        <span>Answers are illustrative in this demo</span>
+        <span>Answers are grounded in your indexed documents</span>
       </div>
     </div>
   );
 }
 
-function ArchiveView() {
+function ArchiveView({
+  documents,
+  loading,
+  refreshing,
+  error,
+  onRefresh,
+  onUpload,
+  onDelete,
+}: {
+  documents: ApiDocument[];
+  loading: boolean;
+  refreshing: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onUpload: (file: File) => Promise<void>;
+  onDelete: (document: ApiDocument) => Promise<void>;
+}) {
   const [search, setSearch] = useState("");
-  const records = demoSources.filter((source) =>
-    `${source.title} ${source.languageScript}`.toLowerCase().includes(search.toLowerCase()),
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const records = documents.filter((document) =>
+    `${document.title} ${document.filename} ${document.language}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
   );
+
+  const submitUpload = async () => {
+    if (!selectedFile || uploading) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await onUpload(selectedFile);
+      setSelectedFile(null);
+    } catch (error) {
+      setUploadError(apiErrorMessage(error));
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <section className="itihasa-secondary-view">
       <span className="itihasa-eyebrow">HISTORICAL ARCHIVE</span>
       <h1>Explore the collection.</h1>
-      <p className="itihasa-secondary-intro">Illustrative interface records. No document archive is connected to this demo.</p>
+      <p className="itihasa-secondary-intro">Upload and manage the source documents used by historical search.</p>
+      <div className="itihasa-archive-upload">
+        <label className="itihasa-archive-file">
+          <Upload size={16} />
+          <span>{selectedFile?.name ?? "Choose a document to upload"}</span>
+          <input
+            accept={supportedDocumentExtensions.join(",")}
+            aria-label="Choose a document to upload"
+            onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+            type="file"
+          />
+        </label>
+        <Button
+          className="itihasa-new-chat"
+          disabled={!selectedFile || uploading}
+          onClick={() => void submitUpload()}
+        >
+          {uploading ? <LoaderCircle className="itihasa-spin" size={15} /> : <Upload size={15} />}
+          {uploading ? "Uploading…" : "Upload"}
+        </Button>
+        <Button
+          className="itihasa-archive-refresh"
+          disabled={refreshing}
+          onClick={onRefresh}
+          title="Refresh document statuses"
+        >
+          <RefreshCw className={refreshing ? "itihasa-spin" : ""} size={15} />
+          Refresh
+        </Button>
+      </div>
       <label className="itihasa-archive-search"><Search size={16} /><input aria-label="Search records" onChange={(event) => setSearch(event.target.value)} placeholder="Search titles or languages" value={search} /></label>
+      {error && (
+        <div className="itihasa-api-error" role="alert">
+          <span>{error}</span>
+          <button onClick={onRefresh} type="button">Retry</button>
+        </div>
+      )}
+      {uploadError && <p className="itihasa-api-error" role="alert">{uploadError}</p>}
       <div className="itihasa-archive-grid">
-        {records.map((record) => (
+        {loading ? (
+          <p className="itihasa-history-empty" role="status">Loading documents…</p>
+        ) : records.map((record) => (
           <article className="itihasa-archive-card" key={record.id}>
             <span className="itihasa-source-icon"><FileText size={18} /></span>
-            <span className="itihasa-demo-tag">ILLUSTRATIVE RECORD</span>
+            <span className={`itihasa-document-status is-${record.status}`}>
+              {record.status}
+            </span>
             <h2>{record.title}</h2>
-            <p>{record.languageScript}</p>
-            <small>{record.pageSection}</small>
+            <p>{record.filename} · {record.language}</p>
+            <small>
+              {record.status === "indexed"
+                ? `${record.num_chunks.toLocaleString()} chunks · ${record.num_pages.toLocaleString()} pages`
+                : record.error ?? record.progress_detail ?? `${record.progress_percent}% complete`}
+            </small>
+            {record.status !== "indexed" && record.status !== "failed" && (
+              <div
+                aria-label={`Ingestion ${record.progress_percent}% complete`}
+                className="itihasa-document-progress"
+              >
+                <span style={{ width: `${record.progress_percent}%` }} />
+              </div>
+            )}
+            <button
+              aria-label={`Delete ${record.title}`}
+              className="itihasa-document-delete"
+              onClick={() => void onDelete(record)}
+              type="button"
+            >
+              <Trash2 size={14} /> Delete
+            </button>
           </article>
         ))}
-        {records.length === 0 && <p className="itihasa-history-empty">No matching records.</p>}
+        {!loading && !error && records.length === 0 && (
+          <p className="itihasa-history-empty">
+            {search
+              ? "No documents match this search."
+              : "No documents yet. Upload a source to start searching."}
+          </p>
+        )}
       </div>
     </section>
   );
 }
 
-function ResearchView() {
+function ResearchView({
+  health,
+  documents,
+  loading,
+  error,
+  onRetry,
+}: {
+  health: ApiHealth | null;
+  documents: ApiDocument[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  const indexed = documents.filter((document) => document.status === "indexed").length;
   return (
     <section className="itihasa-secondary-view">
       <span className="itihasa-eyebrow">RESEARCH DASHBOARD</span>
       <h1>Research, with context.</h1>
-      <p className="itihasa-secondary-intro">A workspace overview. This front-end demo has no retrieval or evaluation backend.</p>
+      <p className="itihasa-secondary-intro">Live ingestion and retrieval health from the Itihasa API.</p>
+      {error && <div className="itihasa-api-error" role="alert"><span>{error}</span><button onClick={onRetry} type="button">Retry</button></div>}
       <div className="itihasa-dashboard-grid">
-        <article><span>CONVERSATIONS</span><strong>Local only</strong><p>Your chat history stays in this browser.</p></article>
-        <article><span>ARCHIVE SEARCH</span><strong>Not connected</strong><p>Sample records are illustrative fixtures.</p></article>
-        <article><span>EVALUATION</span><strong>Unavailable</strong><p>No retrieval metrics are being generated.</p></article>
+        <article><span>DOCUMENTS</span><strong>{loading ? "…" : documents.length.toLocaleString()}</strong><p>{indexed.toLocaleString()} indexed and ready for retrieval.</p></article>
+        <article><span>INDEXED CHUNKS</span><strong>{loading || !health ? "…" : health.sparse_docs.toLocaleString()}</strong><p>Dense vectors: {loading || !health ? "…" : health.dense_vectors.toLocaleString()}.</p></article>
+        <article><span>RETRIEVAL</span><strong>{health?.status === "ok" ? "Online" : loading ? "Checking" : "Unavailable"}</strong><p>Hybrid dense and keyword search.</p></article>
       </div>
-      <div className="itihasa-honesty-card"><CircleHelp size={18} /><p>Answers in this demo are mock responses. They do not represent document retrieval or verified historical research.</p></div>
+      <div className="itihasa-honesty-card"><CircleHelp size={18} /><p>Conversation history and saved-chat controls are stored in this browser; the backend currently provides no account or conversation-sync endpoints.</p></div>
     </section>
   );
 }
@@ -677,12 +845,12 @@ function SettingsView({ onClear }: { onClear: () => void }) {
     <section className="itihasa-secondary-view">
       <span className="itihasa-eyebrow">SETTINGS</span>
       <h1>Your workspace.</h1>
-      <p className="itihasa-secondary-intro">Conversation history is saved locally in this browser.</p>
+      <p className="itihasa-secondary-intro">Conversation history and saved-chat preferences are stored locally in this browser.</p>
       <div className="itihasa-settings-card">
         <div><strong>Clear local chat history</strong><p>Remove all conversations saved in this browser. This cannot be undone.</p></div>
         <Button className="itihasa-clear-button" onClick={onClear}>Clear history</Button>
       </div>
-      <div className="itihasa-honesty-card"><CircleHelp size={18} /><p>Itihasa AI is running in demo mode. Attachments are shown in your message only; they are not uploaded or processed.</p></div>
+      <div className="itihasa-honesty-card"><CircleHelp size={18} /><p>Documents attached to a question are uploaded to the backend and indexed before that question is searched. Chat history remains local to this browser.</p></div>
     </section>
   );
 }
@@ -692,21 +860,24 @@ export default function WorkspacePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<WorkspaceView>("chat");
   const [language, setLanguage] = useState<ResponseLanguage>("English");
-  const [mode, setMode] = useState<RetrievalMode>("Cross-language");
+  const [mode, setMode] = useState<RetrievalMode>("Hybrid");
   const [query, setQuery] = useState("");
   const [attachment, setAttachment] = useState<ChatAttachment | null>(null);
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [documents, setDocuments] = useState<ApiDocument[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [health, setHealth] = useState<ApiHealth | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const shouldPinToBottom = useRef(true);
   const activeGeneration = useRef<{
     conversationId: string;
     messageId: string;
-    interval: number | null;
-    timeout: number | null;
-    offset: number;
-    content: string;
+    controller: AbortController;
   } | null>(null);
 
   useEffect(() => {
@@ -715,7 +886,36 @@ export default function WorkspacePage() {
       if (stored) {
         const parsed: unknown = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          setConversations(parsed as Conversation[]);
+          const containsDemoSources = parsed.some(
+            (conversation) =>
+              typeof conversation === "object" &&
+              conversation !== null &&
+              "messages" in conversation &&
+              Array.isArray(conversation.messages) &&
+              conversation.messages.some(
+                (message: unknown) =>
+                  typeof message === "object" &&
+                  message !== null &&
+                  "sources" in message &&
+                  Array.isArray(message.sources) &&
+                  message.sources.some(
+                    (source: unknown) =>
+                      typeof source === "object" &&
+                      source !== null &&
+                      "isIllustrative" in source &&
+                      source.isIllustrative === true,
+                  ),
+              ),
+          );
+          if (containsDemoSources) {
+            window.localStorage.removeItem(STORAGE_KEY);
+            setToast({
+              message: "Old demonstration chats were cleared; new answers use live sources.",
+              type: "success",
+            });
+          } else {
+            setConversations(parsed as Conversation[]);
+          }
         } else {
           console.error("Stored chat history has an invalid format.");
           setToast({ message: "Saved chat history could not be read.", type: "error" });
@@ -740,15 +940,34 @@ export default function WorkspacePage() {
   }, [conversations, loaded]);
 
   useEffect(() => {
-    return () => {
-      if (activeGeneration.current?.interval !== null && activeGeneration.current?.interval !== undefined) {
-        window.clearInterval(activeGeneration.current.interval);
-      }
-      if (activeGeneration.current?.timeout !== null && activeGeneration.current?.timeout !== undefined) {
-        window.clearTimeout(activeGeneration.current.timeout);
-      }
-    };
+    return () => activeGeneration.current?.controller.abort();
   }, []);
+
+  const refreshDocuments = useCallback(async () => {
+    setDocumentsLoading(true);
+    setDocumentsError(null);
+    try {
+      setDocuments(await api.listDocuments());
+    } catch (error) {
+      setDocumentsError(apiErrorMessage(error));
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, []);
+
+  const refreshHealth = useCallback(async () => {
+    setHealthError(null);
+    try {
+      setHealth(await api.health());
+    } catch (error) {
+      setHealthError(apiErrorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDocuments();
+    void refreshHealth();
+  }, [refreshDocuments, refreshHealth]);
 
   const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
     setToast({ message, type });
@@ -784,40 +1003,116 @@ export default function WorkspacePage() {
     [],
   );
 
-  const startGeneration = useCallback((conversationId: string, messageId: string, answer: string) => {
-    const previous = activeGeneration.current;
-    if (previous?.interval !== null && previous?.interval !== undefined) window.clearInterval(previous.interval);
-    if (previous?.timeout !== null && previous?.timeout !== undefined) window.clearTimeout(previous.timeout);
-    const generation = {
-      conversationId,
-      messageId,
-      interval: null as number | null,
-      timeout: null as number | null,
-      offset: 0,
-      content: answer,
-    };
-    activeGeneration.current = generation;
-
-    generation.timeout = window.setTimeout(() => {
-      updateMessage(conversationId, messageId, (message) => ({ ...message, status: "streaming" }));
-      const words = answer.match(/\S+\s*/g) ?? [answer];
-      generation.interval = window.setInterval(() => {
-        generation.offset = Math.min(generation.offset + 1, words.length);
-        const streamed = words.slice(0, generation.offset).join("");
-        updateMessage(conversationId, messageId, (message) => ({ ...message, content: streamed }));
-        if (generation.offset >= words.length) {
-          if (generation.interval !== null) window.clearInterval(generation.interval);
-          activeGeneration.current = null;
+  const executeQuery = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      question: string,
+      answerLanguage: ResponseLanguage,
+      file?: File,
+    ) => {
+      const controller = new AbortController();
+      activeGeneration.current?.controller.abort();
+      activeGeneration.current = { conversationId, messageId, controller };
+      let uploadedDocument: ApiDocument | undefined;
+      try {
+        if (file) {
           updateMessage(conversationId, messageId, (message) => ({
             ...message,
-            content: answer,
-            status: "completed",
-            sources: demoSources,
+            status: "uploading",
+            progressDetail: `Uploading ${file.name}…`,
+          }));
+          const uploaded = await api.uploadDocument(file, {
+            language: answerLanguage,
+            signal: controller.signal,
+          });
+          uploadedDocument = uploaded;
+          setDocuments((current) => [
+            uploaded,
+            ...current.filter((document) => document.id !== uploaded.id),
+          ]);
+          if (uploaded.status === "failed") {
+            throw new Error(uploaded.error ?? "The uploaded document could not be processed.");
+          }
+
+          let currentDocument = uploaded;
+          while (currentDocument.status !== "indexed") {
+            updateMessage(conversationId, messageId, (message) => ({
+              ...message,
+              status: "indexing",
+              progressDetail:
+                currentDocument.progress_detail ??
+                `Indexing ${currentDocument.progress_percent}% complete…`,
+            }));
+            await waitForDelay(2000, controller.signal);
+            currentDocument = await api.getDocument(uploaded.id, controller.signal);
+            setDocuments((current) =>
+              current.map((document) =>
+                document.id === currentDocument.id ? currentDocument : document,
+              ),
+            );
+            if (currentDocument.status === "failed") {
+              throw new Error(
+                currentDocument.error ?? "The uploaded document could not be indexed.",
+              );
+            }
+          }
+        }
+
+        updateMessage(conversationId, messageId, (message) => ({
+          ...message,
+          status: "querying",
+          progressDetail: "Searching indexed sources…",
+        }));
+        const result: QueryResponse = await api.query(
+          { question, answer_language: answerLanguage },
+          controller.signal,
+        );
+        const rerankScores = new Map(
+          result.retrieval.reranked.map((hit) => [hit.chunk_id, hit.score]),
+        );
+        const documentLanguages = new Map(
+          [...documents, ...(uploadedDocument ? [uploadedDocument] : [])].map(
+            (document) => [document.id, document.language] as const,
+          ),
+        );
+        const sources: ChatSource[] = result.citations.map((citation) => ({
+          id: `chunk-${citation.chunk_db_id}`,
+          documentId: citation.document_id,
+          title: citation.title,
+          languageScript: documentLanguages.get(citation.document_id) ?? "Unknown language",
+          pageSection:
+            citation.page_start === citation.page_end
+              ? `Page ${citation.page_start}`
+              : `Pages ${citation.page_start}–${citation.page_end}`,
+          snippet: citation.excerpt,
+          relevanceScore: rerankScores.get(citation.chunk_db_id),
+        }));
+        updateMessage(conversationId, messageId, (message) => ({
+          ...message,
+          content: result.answer,
+          sources,
+          status: "completed",
+          errorDetails: undefined,
+          progressDetail: undefined,
+        }));
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          updateMessage(conversationId, messageId, (message) => ({
+            ...message,
+            status: "failed",
+            errorDetails: apiErrorMessage(error),
+            progressDetail: undefined,
           }));
         }
-      }, 38);
-    }, 350);
-  }, [updateMessage]);
+      } finally {
+        if (activeGeneration.current?.controller === controller) {
+          activeGeneration.current = null;
+        }
+      }
+    },
+    [documents, updateMessage],
+  );
 
   const sendMessage = useCallback(() => {
     const text = query.trim();
@@ -842,7 +1137,7 @@ export default function WorkspacePage() {
       role: "assistant",
       content: "",
       timestamp: now + 1,
-      status: "pending",
+      status: attachmentFile ? "uploading" : "querying",
       sources: [],
       language,
     };
@@ -871,28 +1166,30 @@ export default function WorkspacePage() {
     setView("chat");
     setQuery("");
     setAttachment(null);
+    setAttachmentFile(null);
     shouldPinToBottom.current = true;
-    startGeneration(conversationId, assistantId, createDemoAnswer(language));
-  }, [attachment, language, query, selectedId, startGeneration]);
+    void executeQuery(conversationId, assistantId, text, language, attachmentFile ?? undefined);
+  }, [attachment, attachmentFile, executeQuery, language, query, selectedId]);
 
   const stopGeneration = () => {
     const active = activeGeneration.current;
     if (!active) return;
-    if (active.interval !== null) window.clearInterval(active.interval);
-    if (active.timeout !== null) window.clearTimeout(active.timeout);
+    active.controller.abort();
     updateMessage(active.conversationId, active.messageId, (message) => ({
       ...message,
       status: "stopped",
     }));
     activeGeneration.current = null;
-    showToast("Response generation stopped.");
+    showToast("Stopped waiting for the response. Uploaded documents may continue indexing.");
   };
 
   const newChat = () => {
+    if (activeGeneration.current) stopGeneration();
     setSelectedId(null);
     setView("chat");
     setQuery("");
     setAttachment(null);
+    setAttachmentFile(null);
     setMobileOpen(false);
     shouldPinToBottom.current = true;
   };
@@ -969,15 +1266,30 @@ export default function WorkspacePage() {
 
   const regenerate = (message: ChatMessage) => {
     if (!selectedId || activeGeneration.current) return;
+    const messageIndex = selectedConversation?.messages.findIndex(
+      (item) => item.id === message.id,
+    ) ?? -1;
+    const previousUserMessage = selectedConversation?.messages
+      .slice(0, messageIndex)
+      .findLast((item) => item.role === "user");
+    if (!previousUserMessage) {
+      showToast("The original question could not be found.", "error");
+      return;
+    }
     updateMessage(selectedId, message.id, (current) => ({
       ...current,
       content: "",
-      status: "pending",
+      status: "querying",
       sources: [],
       errorDetails: undefined,
     }));
     shouldPinToBottom.current = true;
-    startGeneration(selectedId, message.id, createDemoAnswer(message.language));
+    void executeQuery(
+      selectedId,
+      message.id,
+      previousUserMessage.content,
+      message.language,
+    );
   };
 
   const feedback = (messageId: string, value: "up" | "down") => {
@@ -1001,6 +1313,31 @@ export default function WorkspacePage() {
     target?.scrollIntoView({ behavior: "smooth", block: "center" });
     target?.classList.add("is-highlighted");
     window.setTimeout(() => target?.classList.remove("is-highlighted"), 1500);
+  };
+
+  const uploadArchiveDocument = async (file: File) => {
+    try {
+      const uploaded = await api.uploadDocument(file);
+      setDocuments((current) => [
+        uploaded,
+        ...current.filter((document) => document.id !== uploaded.id),
+      ]);
+      showToast(`Uploaded ${uploaded.title}. Refresh to check indexing progress.`);
+    } catch (error) {
+      showToast(apiErrorMessage(error), "error");
+      throw error;
+    }
+  };
+
+  const deleteArchiveDocument = async (document: ApiDocument) => {
+    if (!window.confirm(`Delete "${document.title}" and its indexed chunks?`)) return;
+    try {
+      await api.deleteDocument(document.id);
+      setDocuments((current) => current.filter((item) => item.id !== document.id));
+      showToast(`Deleted ${document.title}.`);
+    } catch (error) {
+      showToast(apiErrorMessage(error), "error");
+    }
   };
 
   const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
@@ -1076,6 +1413,7 @@ export default function WorkspacePage() {
               language={language}
               mode={mode}
               onNotify={showToast}
+              onFileSelect={setAttachmentFile}
               onSend={sendMessage}
               onStop={stopGeneration}
               query={query}
@@ -1086,9 +1424,26 @@ export default function WorkspacePage() {
             />
           </div>
         ) : view === "archive" ? (
-          <ArchiveView />
+          <ArchiveView
+            documents={documents}
+            error={documentsError}
+            loading={documentsLoading}
+            onDelete={deleteArchiveDocument}
+            onRefresh={() => void refreshDocuments()}
+            onUpload={uploadArchiveDocument}
+            refreshing={documentsLoading}
+          />
         ) : view === "research" ? (
-          <ResearchView />
+          <ResearchView
+            documents={documents}
+            error={documentsError ?? healthError}
+            health={health}
+            loading={documentsLoading}
+            onRetry={() => {
+              void refreshDocuments();
+              void refreshHealth();
+            }}
+          />
         ) : (
           <SettingsView onClear={clearHistory} />
         )}

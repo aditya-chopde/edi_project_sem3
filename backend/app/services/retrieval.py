@@ -176,6 +176,7 @@ def answer_query(
             continue
         citations.append(
             Citation(
+                chunk_db_id=chunk_id,
                 document_id=document.id,
                 title=document.title,
                 page_start=chunk.page_start,

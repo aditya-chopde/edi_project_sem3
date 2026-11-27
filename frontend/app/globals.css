@@ -41,6 +41,18 @@ button { cursor: pointer; }
 .auth-success p { margin: 0 0 8px; color: #889294; font-size: 13px; line-height: 1.65; }
 .auth-reset { border: 0; padding: 0; background: transparent; color: #9b6d4c; font-size: 11px; }
 .auth-reset:hover { color: #193649; }
+.auth-api-error { margin: 0 0 16px; padding: 11px 12px; border: 1px solid #ead3cc; border-radius: 6px; background: #fff7f4; color: #934e42; font-size: 11px; line-height: 1.55; }
+.auth-inline-button { padding: 0; border: 0; background: transparent; color: #a6663d; cursor: pointer; font-size: inherit; }
+.auth-inline-button:hover { color: #193649; }
+.live-pill.is-offline { color: #a34f41; }
+.live-pill.is-offline i { background: #a34f41; }
+.landing-spinner { color: #ad7654; animation: itihasa-spin 1.1s linear infinite; }
+@keyframes itihasa-spin { to { transform: rotate(360deg); } }
+@media (max-width: 780px) {
+  .landing-links.is-open { position: absolute; z-index: 4; top: 62px; right: 16px; left: 16px; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px; border: 1px solid #dfddd5; border-radius: 9px; background: #fffefa; box-shadow: 0 10px 28px #22394a18; }
+  .landing-links.is-open a { padding: 12px; }
+  .landing-links.is-open .nav-cta { justify-content: center; margin-top: 4px; }
+}
 @media (prefers-reduced-motion: reduce) { .hero-breathing, .landing-nav, .hero-copy, .hero-card, .trust-strip, .feature-grid, .landing-footer, .auth-form-wrap, .auth-visual h1 { animation: none; } }
 .thinking-state { order: 2; animation: thinking-in .32s ease-out both; }
 @keyframes thinking-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

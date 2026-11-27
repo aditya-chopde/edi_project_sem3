@@ -5,11 +5,13 @@ export type ResponseLanguage =
   | "Hinglish"
   | "Sanskrit";
 
-export type RetrievalMode = "Cross-language" | "Hybrid" | "Same-language";
+export type RetrievalMode = "Hybrid";
 
 export type MessageStatus =
   | "pending"
-  | "streaming"
+  | "uploading"
+  | "indexing"
+  | "querying"
   | "completed"
   | "stopped"
   | "failed";
@@ -22,7 +24,6 @@ export type ChatSource = {
   pageSection: string;
   snippet: string;
   relevanceScore?: number;
-  isIllustrative: true;
 };
 
 export type ChatAttachment = {
@@ -41,6 +42,7 @@ export type ChatMessage = {
   sources: ChatSource[];
   language: ResponseLanguage;
   errorDetails?: string;
+  progressDetail?: string;
   attachment?: ChatAttachment;
   feedback?: "up" | "down";
 };

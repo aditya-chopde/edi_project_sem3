@@ -69,7 +69,13 @@ FUSED_TOP_K = 25
 RERANKED_TOP_K = 5
 RRF_K = 60
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-CORS_ORIGINS = ["http://localhost:3000"]
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "ITIHASA_CORS_ORIGINS", "http://localhost:3000"
+    ).split(",")
+    if origin.strip()
+] or ["http://localhost:3000"]
 LOG_LEVEL = os.getenv("ITIHASA_LOG_LEVEL", "INFO").upper()
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
     raise ValueError(

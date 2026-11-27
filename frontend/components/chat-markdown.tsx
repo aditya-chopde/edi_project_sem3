@@ -13,23 +13,26 @@ function Inline({
   onCitationClick: ChatMarkdownProps["onCitationClick"];
 }) {
   const pattern =
-    /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[source:[\w-]+\])/g;
+    /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[source:[\w-]+\]|\[chunk_db_id=\d+\])/g;
   const parts = text.split(pattern);
 
   return (
     <>
       {parts.map((part, index) => {
         const citation = /^\[source:([\w-]+)\]$/.exec(part);
-        if (citation) {
+        const chunkCitation = /^\[chunk_db_id=(\d+)\]$/.exec(part);
+        if (citation || chunkCitation) {
+          const sourceId = citation?.[1] ?? `chunk-${chunkCitation?.[1]}`;
+          const label = chunkCitation?.[1] ?? sourceId.replace(/^chunk-/, "");
           return (
             <button
               className="itihasa-citation"
               key={`${part}-${index}`}
-              onClick={() => onCitationClick(citation[1])}
+              onClick={() => onCitationClick(sourceId)}
               type="button"
-              aria-label={`View source ${citation[1]}`}
+              aria-label={`View source ${label}`}
             >
-              [{citation[1].endsWith("sanskrit") ? "1" : citation[1].endsWith("marathi") ? "2" : "3"}]
+              [{label}]
             </button>
           );
         }
