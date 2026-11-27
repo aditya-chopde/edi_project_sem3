@@ -2,19 +2,8 @@
 
 import Link from 'next/link'
 import { ArrowLeft, ArrowRight, BookOpen } from 'lucide-react'
-import { useState } from 'react'
-
-const authUnavailable =
-  'Account creation is not available because the connected backend does not expose authentication endpoints. Your details were not sent.'
 
 export default function SignUpPage() {
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setError(authUnavailable)
-  }
-
   return (
     <main className="auth-shell">
       <div className="auth-visual signup-visual">
@@ -39,26 +28,13 @@ export default function SignUpPage() {
           <div className="eyebrow accent-label">GET STARTED</div>
           <h2>Create your account</h2>
           <p className="auth-intro">Join a quieter, deeper way to search the past.</p>
-          {error && <p className="auth-api-error" role="alert">{error}</p>}
-          <form onSubmit={handleSubmit}>
-            <label>
-              Your name
-              <input autoComplete="name" type="text" required placeholder="Your name" />
-            </label>
-            <label>
-              Email address
-              <input autoComplete="email" type="email" required placeholder="you@example.com" />
-            </label>
-            <label>
-              Password
-              <input autoComplete="new-password" type="password" minLength={8} required placeholder="At least 8 characters" />
-            </label>
-            <button className="auth-submit" type="submit">
-              Create account <ArrowRight data-icon="inline-end" />
-            </button>
-          </form>
-          <p className="terms-copy">Authentication is not configured for this backend; no account details are transmitted.</p>
-          <p className="auth-switch">You can still <Link href="/workspace">continue to the workspace</Link>.</p>
+          <p className="terms-copy">
+            Account creation is not connected yet. You can still use the chat in testing
+            mode; no account details are needed or collected.
+          </p>
+          <Link className="auth-submit" href="/workspace">
+            Continue to workspace <ArrowRight data-icon="inline-end" />
+          </Link>
           <p className="auth-switch">Already have an account? <Link href="/auth/sign-in">Sign in</Link></p>
         </div>
       </section>
